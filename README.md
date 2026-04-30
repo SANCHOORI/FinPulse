@@ -10,18 +10,79 @@ This repo is built as a serious-but-compact demonstration of the data infrastruc
 
 ## What this system does
 
-```
- external sources           durable storage           feature layer            signal layer
- ─────────────────          ───────────────           ─────────────            ────────────
- HackerNews API   ─┐                                                       
- Bluesky firehose  ├─►  partitioned Parquet  ─►  DuckDB / Spark    ─►   sentiment-driven
- StockTwits        │    (S3 / S3-compatible)     feature views          market signal
- Reddit            ─┘                                                  + backtest harness
+```mermaid
+flowchart LR
+    subgraph SOURCES["External sources"]
+        direction TB
+        HN["HackerNews API<br/>(live)"]
+        BS["Bluesky firehose<br/>(planned)"]
+        ST["StockTwits<br/>(planned)"]
+    end
 
-                          ▲                          ▲
-                          │                          │
-                  schema + idempotency       monitoring + metrics
+    subgraph INGEST["Ingest layer"]
+        IS["IngestSource Protocol<br/>1 process per source<br/>backoff + retry per source"]
+    end
+
+    HN ==> IS
+    BS -.-> IS
+    ST -.-> IS
+
+    subgraph STORAGE["Storage — partitioned Parquet"]
+        RAW[("source=*/dt=*/hr=*/<br/>raw events<br/>idempotent batches")]
+    end
+
+    IS ==> RAW
+
+    subgraph FEATURES["Feature layer — DuckDB over Parquet"]
+        SCORE["VADER sentiment scoring"]
+        TICK["ticker extraction<br/>(cashtag + whitelist)"]
+        SENT[("derived/sentiment/<br/>compound, pos, neg,<br/>tickers[]")]
+        VIEW["per-ticker, per-minute view<br/>(UNNEST tickers)"]
+    end
+
+    RAW ==> SCORE
+    RAW ==> TICK
+    SCORE ==> SENT
+    TICK ==> SENT
+    SENT ==> VIEW
+
+    subgraph MARKET["Market data"]
+        MOCK["mock OHLCV<br/>(deterministic random walk;<br/>swap for yfinance / Alpaca)"]
+        MBAR[("derived/market/<br/>1-minute bars")]
+    end
+
+    MOCK ==> MBAR
+
+    subgraph SIGNAL["Signal layer (DuckDB SQL)"]
+        Z["z-score: 5m mentions<br/>vs. 1h baseline"]
+        SHIFT["sentiment shift:<br/>5m avg − 1h avg"]
+        COMP["composite =<br/>z_mentions × sentiment_shift"]
+        POS{"position<br/>long / short / flat"}
+        FWD["forward 5m return<br/>(joined with market)"]
+    end
+
+    VIEW ==> Z
+    VIEW ==> SHIFT
+    Z ==> COMP
+    SHIFT ==> COMP
+    COMP ==> POS
+    POS ==> FWD
+    MBAR ==> FWD
+
+    subgraph OBS["Cross-cutting"]
+        MET["counters + structured logs<br/>(events_in, events_out,<br/>parse_errors, lag_seconds)"]
+    end
+
+    IS -.-> MET
+    SCORE -.-> MET
+
+    classDef planned stroke-dasharray: 5 5
+    class BS,ST planned
+    classDef storage fill:#eef,stroke:#88a
+    class RAW,SENT,MBAR storage
 ```
+
+**Conventions:** solid arrows = current data flow; dashed = planned sources or cross-cutting; cylinder shapes = Parquet storage on disk; diamond = the long / short / flat decision.
 
 1. **Ingest** — long-running, restart-safe pollers / streamers per source. Each source is an isolated process behind a common interface, so adding a new provider is one file.
 2. **Land** — events land in S3 (or local FS / MinIO for dev) as Parquet, partitioned by `source / dt / hr`. Writes are idempotent: re-running an ingest window will not double-count.
