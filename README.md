@@ -117,7 +117,10 @@ finpulse market
 #    joined with market data and forward 5m return
 finpulse signal
 
-# 8. run tests
+# 8. run the full backtest + throughput report (writes BENCHMARKS.md)
+finpulse report
+
+# 9. run tests
 make test
 ```
 
@@ -150,10 +153,14 @@ src/finpulse/
     mock.py
   signals/        # composite signal (mentions z-score x sentiment shift)
     build.py
+  backtest/       # vectorised pandas backtest: Sharpe, max DD, hit rate
+    runner.py
+  bench/          # throughput + cost benchmarks
+    throughput.py
   monitoring/     # counters + structured logging
     metrics.py
   config.py
-  cli.py          # entrypoints: ingest, query, score, tickers, market, signal, metrics
+  cli.py          # entrypoints: ingest, query, score, tickers, market, signal, report, metrics
 docs/
   ARCHITECTURE.md # design choices + what changes at 100x scale
 tests/
@@ -198,7 +205,9 @@ The roadmap section below tracks these.
 - [x] Per-ticker feature view (mention volume, average sentiment)
 - [x] Mock OHLCV generator with the same shape a real fetcher would produce
 - [x] Composite signal (mentions z-score × sentiment shift) joined with market data and forward 5m return
-- [ ] Replace mock market with real fetch (yfinance / Alpaca free tier)
+- [x] Vectorised backtest (Sharpe, max drawdown, hit rate) → [BENCHMARKS.md](BENCHMARKS.md)
+- [x] Throughput + cost report (events/sec, MB/sec, $/GB) → [BENCHMARKS.md](BENCHMARKS.md)
+- [ ] Replace mock market with real fetch (yfinance / Alpaca free tier) — this is what makes the backtest numbers meaningful
 - [ ] Bluesky firehose ingester (AT Protocol over WebSocket)
 - [ ] StockTwits streaming ingester
 - [ ] Upgrade sentiment to a small finance-tuned transformer
