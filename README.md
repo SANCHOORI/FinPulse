@@ -41,7 +41,13 @@ make ingest-hn
 # 3. inspect what landed (DuckDB query over Parquet)
 make query
 
-# 4. run tests
+# 4. run sentiment scoring + ticker extraction over the lake
+finpulse score
+
+# 5. inspect per-ticker mentions and average sentiment
+finpulse tickers
+
+# 6. run tests
 make test
 ```
 
@@ -66,12 +72,14 @@ src/finpulse/
     hackernews.py
   storage/        # parquet sink, partitioning, idempotent writes
     parquet_sink.py
-  features/       # DuckDB views over the lake
+  features/       # DuckDB views, sentiment scoring, ticker extraction
     build.py
+    sentiment.py
+    tickers.py
   monitoring/     # counters + structured logging
     metrics.py
   config.py
-  cli.py          # entrypoints: ingest, features, query
+  cli.py          # entrypoints: ingest, query, score, tickers, metrics
 docs/
   ARCHITECTURE.md # design choices + what changes at 100x scale
 tests/
@@ -110,10 +118,13 @@ The roadmap section below tracks these.
 - [x] DuckDB-backed feature view
 - [x] Counter-based monitoring + structured logging
 - [x] Tests for the storage layer
+- [x] Sentiment scoring (VADER baseline)
+- [x] Ticker extraction (cashtag + whitelist)
+- [x] Per-ticker feature view (mention volume, average sentiment)
 - [ ] Bluesky firehose ingester (AT Protocol over WebSocket)
 - [ ] StockTwits streaming ingester
-- [ ] Sentiment scoring (VADER baseline → small transformer)
-- [ ] Per-ticker feature view (mention volume, sentiment delta)
+- [ ] Upgrade sentiment to a small finance-tuned transformer
+- [ ] Sentiment delta (rolling window) feature
 - [ ] Market data join (Alpaca / yfinance free tier)
 - [ ] Signal: abnormal mentions + sentiment shift → directional bet
 - [ ] Vectorised backtest with cost / slippage assumptions

@@ -6,7 +6,7 @@ import time
 import typer
 
 from finpulse.config import Settings
-from finpulse.features import summarize
+from finpulse.features import per_ticker_view, run_scoring, summarize
 from finpulse.ingest.hackernews import HackerNewsSource
 from finpulse.log import configure as configure_logging
 from finpulse.log import get_logger
@@ -66,6 +66,37 @@ def query():
     typer.echo("-" * 47)
     for source, minute, n in rows:
         typer.echo(f"{source:<14} {str(minute):<25} {n:>6}")
+
+
+@app.command("score")
+def score():
+    """Run sentiment scoring + ticker extraction over the raw lake.
+
+    Reads every raw event, writes one Parquet file per source/dt/hr to
+    {lake_root}/derived/sentiment/. Idempotent: re-running overwrites.
+    """
+    settings = Settings.from_env()
+    configure_logging(settings)
+    n = run_scoring(settings.lake_root)
+    typer.echo(f"scored {n} events")
+
+
+@app.command("tickers")
+def tickers():
+    """Print per-ticker, per-minute mention counts + average sentiment."""
+    settings = Settings.from_env()
+    configure_logging(settings)
+    rows = per_ticker_view(settings.lake_root)
+    if not rows:
+        typer.echo(
+            "(no ticker mentions found — run `finpulse score` if you haven't, "
+            "otherwise no recent events mention tickers in the whitelist)"
+        )
+        return
+    typer.echo(f"{'ticker':<8} {'bucket':<25} {'mentions':>9} {'avg_compound':>13}")
+    typer.echo("-" * 58)
+    for ticker, bucket, mentions, avg_compound in rows:
+        typer.echo(f"{ticker:<8} {str(bucket):<25} {mentions:>9} {avg_compound:>13}")
 
 
 @app.command("metrics")
