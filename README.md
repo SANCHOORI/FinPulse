@@ -49,7 +49,14 @@ finpulse score
 # 5. inspect per-ticker mentions and average sentiment
 finpulse tickers
 
-# 6. run tests
+# 6. generate synthetic OHLCV market data (mock; swap for yfinance/Alpaca)
+finpulse market
+
+# 7. compute the composite signal (mentions z-score x sentiment shift),
+#    joined with market data and forward 5m return
+finpulse signal
+
+# 8. run tests
 make test
 ```
 
@@ -78,10 +85,14 @@ src/finpulse/
     build.py
     sentiment.py
     tickers.py
+  market/         # OHLCV provider; current impl is a deterministic mock
+    mock.py
+  signals/        # composite signal (mentions z-score x sentiment shift)
+    build.py
   monitoring/     # counters + structured logging
     metrics.py
   config.py
-  cli.py          # entrypoints: ingest, query, score, tickers, metrics
+  cli.py          # entrypoints: ingest, query, score, tickers, market, signal, metrics
 docs/
   ARCHITECTURE.md # design choices + what changes at 100x scale
 tests/
@@ -102,11 +113,12 @@ tests/
 
 ## What's deliberately deferred
 
-This scaffold runs end-to-end with one ingest source. The following are next-step work, not infrastructure decisions:
+This scaffold runs end-to-end with one ingest source and a synthetic market feed. The following are next-step work, not infrastructure decisions:
 
-- **Additional sources** — Bluesky firehose, StockTwits, Reddit. Each is a single `IngestSource` implementation; the storage / feature layers don't change.
-- **Sentiment model** — currently a placeholder; swap in VADER for a baseline or a small HF model for something better.
-- **Strategy + backtest** — the feature layer is wired, but the signal definition and backtest harness are stubs.
+- **Additional sources** — Bluesky firehose, StockTwits, Reddit. Each is a single `IngestSource` implementation; the storage / feature / signal layers don't change.
+- **Real market data** — `market/mock.py` currently generates synthetic OHLCV. Same schema, same partition layout, same DuckDB view — swap the body for `yfinance.download()` or Alpaca's bars API and nothing else moves.
+- **Sentiment model** — VADER baseline today; a small finance-tuned transformer is the obvious upgrade (no pipeline change).
+- **Backtest with cost/slippage** — the signal already joins to a forward-5m return for inspection; a vectorised PnL with realistic fees is the next item.
 - **Production S3 + Kafka** — local FS is the dev backend; the sink already speaks S3 via `s3://` paths. Kafka between ingest and sink is a one-day change once write rates demand it.
 
 The roadmap section below tracks these.
@@ -123,11 +135,12 @@ The roadmap section below tracks these.
 - [x] Sentiment scoring (VADER baseline)
 - [x] Ticker extraction (cashtag + whitelist)
 - [x] Per-ticker feature view (mention volume, average sentiment)
+- [x] Mock OHLCV generator with the same shape a real fetcher would produce
+- [x] Composite signal (mentions z-score × sentiment shift) joined with market data and forward 5m return
+- [ ] Replace mock market with real fetch (yfinance / Alpaca free tier)
 - [ ] Bluesky firehose ingester (AT Protocol over WebSocket)
 - [ ] StockTwits streaming ingester
 - [ ] Upgrade sentiment to a small finance-tuned transformer
-- [ ] Sentiment delta (rolling window) feature
-- [ ] Market data join (Alpaca / yfinance free tier)
 - [ ] Signal: abnormal mentions + sentiment shift → directional bet
 - [ ] Vectorised backtest with cost / slippage assumptions
 - [ ] Throughput + cost report (events/sec, $/GB ingested)
