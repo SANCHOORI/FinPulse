@@ -10,7 +10,9 @@ from finpulse.features import per_ticker_view, run_scoring, summarize
 from finpulse.ingest.hackernews import HackerNewsSource
 from finpulse.log import configure as configure_logging
 from finpulse.log import get_logger
+from finpulse.market import generate_mock_market
 from finpulse.monitoring import metrics
+from finpulse.signals import build_signal
 from finpulse.storage import ParquetSink
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
@@ -97,6 +99,107 @@ def tickers():
     typer.echo("-" * 58)
     for ticker, bucket, mentions, avg_compound in rows:
         typer.echo(f"{ticker:<8} {str(bucket):<25} {mentions:>9} {avg_compound:>13}")
+
+
+_DEFAULT_MOCK_TICKERS = ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "META", "GOOGL", "SPY", "QQQ"]
+
+
+@app.command("market")
+def market(
+    tickers: str = typer.Option(
+        "",
+        help="Comma-separated tickers. Default: tickers from scored sentiment "
+        "(falls back to a built-in basket if empty).",
+    ),
+    minutes: int = typer.Option(120, help="Number of 1-minute bars per ticker."),
+):
+    """Generate synthetic OHLCV market data and write to the lake.
+
+    NOTE: market data is mock-generated for demonstration. Real fetch
+    (yfinance / Alpaca) is a one-file swap — see src/finpulse/market/mock.py.
+    """
+    settings = Settings.from_env()
+    configure_logging(settings)
+
+    if tickers.strip():
+        ticker_list = [t.strip().upper() for t in tickers.split(",") if t.strip()]
+    else:
+        ticker_list = _auto_tickers(settings.lake_root) or _DEFAULT_MOCK_TICKERS
+
+    start_ts_ms = _market_anchor(settings.lake_root, minutes)
+    n = generate_mock_market(settings.lake_root, ticker_list, start_ts_ms, minutes)
+    typer.echo(
+        f"generated {n} synthetic bars for {len(ticker_list)} tickers "
+        f"({minutes} min each)"
+    )
+    typer.echo(
+        "NOTE: market data is mock-generated; swap src/finpulse/market/mock.py "
+        "for a real fetcher."
+    )
+
+
+def _auto_tickers(lake_root: str) -> list[str]:
+    """Read tickers mentioned in the sentiment partition (if any)."""
+    from finpulse.features.build import open_lake
+
+    try:
+        con = open_lake(lake_root)
+        rows = con.execute(
+            "SELECT DISTINCT t.ticker FROM sentiment s, UNNEST(s.tickers) AS t(ticker)"
+        ).fetchall()
+        return [r[0] for r in rows if r[0]]
+    except Exception:
+        return []
+
+
+def _market_anchor(lake_root: str, minutes: int) -> int:
+    """Anchor the synthetic market window to overlap with event timestamps so
+    the signal can join. Falls back to (now - minutes/2 minutes) if there are
+    no events yet."""
+    from finpulse.features.build import open_lake
+
+    try:
+        con = open_lake(lake_root)
+        row = con.execute("SELECT min(event_ts), max(event_ts) FROM events").fetchone()
+        if row and row[0] is not None and row[1] is not None:
+            min_ts, max_ts = row
+            # Center the market window so it covers events on both sides.
+            center = (min_ts + max_ts) // 2
+            return int(center - (minutes // 2) * 60_000)
+    except Exception:
+        pass
+    import time as _t
+
+    return int(_t.time() * 1000) - (minutes // 2) * 60_000
+
+
+@app.command("signal")
+def signal():
+    """Compute the composite signal joined with market data; print the top rows."""
+    settings = Settings.from_env()
+    configure_logging(settings)
+    rows = build_signal(settings.lake_root)
+    if not rows:
+        typer.echo(
+            "(no signal rows — run `finpulse score` and `finpulse market` first, "
+            "and ensure events with tickers are in the lake)"
+        )
+        return
+    header = (
+        f"{'ticker':<8} {'bucket':<22} {'z_ment':>7} "
+        f"{'sent_shift':>10} {'composite':>10} {'pos':<6} "
+        f"{'close_now':>10} {'fwd_ret_5m':>11}"
+    )
+    typer.echo(header)
+    typer.echo("-" * len(header))
+    for r in rows[:50]:
+        ticker, bucket, z, ss, comp, pos, cn, _cf, fr = r
+        cn_s = f"{cn:.2f}" if cn is not None else "-"
+        fr_s = f"{fr:.5f}" if fr is not None else "-"
+        typer.echo(
+            f"{ticker:<8} {str(bucket):<22} {z!s:>7} {ss!s:>10} "
+            f"{comp!s:>10} {pos:<6} {cn_s:>10} {fr_s:>11}"
+        )
 
 
 @app.command("metrics")

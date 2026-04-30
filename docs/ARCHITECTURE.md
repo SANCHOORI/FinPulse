@@ -70,15 +70,20 @@ Why DuckDB for the dev / first-prod feature layer:
 
 The feature layer is intentionally thin in this scaffold. Real ones (mention-volume per ticker per minute, sentiment delta over rolling windows) are the next step.
 
-### 4. Signal + backtest
+### 4. Signal + market data
 
-Stubbed. The interesting design choice here is *what features the signal sees*, not the backtest mechanics. Once the per-ticker feature view exists, a sensible v0 signal is:
+Implemented in `signals/build.py` as DuckDB SQL:
 
-- z-score of mention volume in the last 5m vs. the trailing 1h baseline,
-- multiplied by sentiment delta over the same window,
-- thresholded into long / short / flat.
+- Per-ticker, per-minute mentions and average sentiment from the sentiment partition (UNNEST over the `tickers` array).
+- 5m and 1h rolling windows over that view.
+- `z_mentions = (mentions_5m − mean(mentions over 1h)) / stddev`.
+- `sentiment_shift = avg_sentiment_5m − avg_sentiment_1h`.
+- `composite = z_mentions × sentiment_shift`, thresholded into `long` / `short` / `flat`.
+- LEFT JOINed with market data on `(ticker, minute)` to attach `close_now`, `close_fwd_5m`, and a forward-5m return — useful for visual sanity-checking, not a real PnL.
 
-Backtest with vectorbt over the joined social + market dataframe.
+Market data lives at `{root}/derived/market/dt=*/hr=*/*.parquet` with the same Hive layout as events. The current implementation in `market/mock.py` is a deterministic random walk per ticker (seeded by SHA-256 of the ticker, so re-runs are reproducible). The fetch / write code is identical in shape to a real provider call — `_random_walk()` is the swap point for `yfinance.download()` or Alpaca bars.
+
+A real vectorised backtest with cost + slippage assumptions is the next roadmap item; the signal SQL already exposes everything that backtest would need.
 
 ## Cross-cutting concerns
 
@@ -125,3 +130,4 @@ Critically, *application code does not change*. The sink already takes an `s3://
 - **No schema evolution story.** Adding a column to an event today means readers that don't know about it are still fine, but removing or renaming a column will break partitions written before the change. Iceberg / Delta solves this; we don't have it.
 - **One file per batch is wasteful at small batch sizes.** A 60-second test produces tens of small files. Fine for dev; production wants a compaction job.
 - **No cost guardrails.** Nothing enforces "don't write more than X GB / hour" or "fail loud if event rate halves." These are the alerts that actually catch problems.
+- **Market data is synthetic.** `market/mock.py` is a placeholder; the price paths it produces are seeded random walks, not real prices. The signal numbers it feeds are structurally correct but financially meaningless. A real fetcher swap is one file.
