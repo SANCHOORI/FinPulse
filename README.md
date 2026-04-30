@@ -1,5 +1,7 @@
 # FinPulse
 
+[![CI](https://github.com/SANCHOORI/FinPulse/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/SANCHOORI/FinPulse/actions/workflows/ci.yml)
+
 A production-grade, end-to-end data system that ingests live social/financial data, lands it reliably to S3-compatible storage, builds features on top, and produces market signals.
 
 This repo is built as a serious-but-compact demonstration of the data infrastructure that powers a learning trading system: high-throughput ingestion from external providers, durable Parquet-on-S3 storage, structured feature preparation, and observable operation.
